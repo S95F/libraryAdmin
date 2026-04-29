@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Checkouts — LibraryMS Admin</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="admin-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">📚 LibraryMS</div>
+    <nav id="sidebar-nav"></nav>
+    <div class="sidebar-footer">
+      <button class="btn btn-outline btn-sm w-full" onclick="logout()" style="color:#94a3b8; border-color:#334155;">Sign Out</button>
+    </div>
+  </aside>
+
+  <main class="admin-main">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">📖 Checkout Tracking</h1>
+        <p class="page-subtitle">Monitor all borrowing activity across the library.</p>
+      </div>
+    </div>
+
+    <div class="stats-grid" id="checkout-stats" style="margin-bottom:20px;"></div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-body" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <button class="btn btn-sm" id="f-all"     onclick="setFilter('all')">All</button>
+        <button class="btn btn-sm" id="f-active"  onclick="setFilter('active')">Active</button>
+        <button class="btn btn-sm" id="f-overdue" onclick="setFilter('overdue')">⚠ Overdue</button>
+        <button class="btn btn-sm" id="f-returned" onclick="setFilter('returned')">Returned</button>
+        <div style="flex:1;"></div>
+        <input type="text" id="search-input" class="form-control" placeholder="Search member or book…" style="max-width:260px;">
+        <span id="checkout-count" class="text-muted text-sm"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Member</th><th>Book</th><th>Checked Out</th><th>Due Date</th><th>Returned</th><th>Status</th></tr>
+          </thead>
+          <tbody id="checkouts-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+let allCheckouts = [];
+let activeFilter = 'all';
+
+function buildSidebar() {
+  const links = [
+    { href: '/admin/index.html',     icon: '📊', label: 'Dashboard' },
+    { href: '/admin/inventory.html', icon: '📚', label: 'Inventory' },
+    { href: '/admin/users.html',     icon: '👥', label: 'Users' },
+    { href: '/admin/requests.html',  icon: '📋', label: 'Requests' },
+    { href: '/admin/checkouts.html', icon: '📖', label: 'Checkouts' },
+    { href: '/admin/analytics.html', icon: '📈', label: 'Analytics' },
+  ];
+  const cur = window.location.pathname;
+  document.getElementById('sidebar-nav').innerHTML = links.map(l =>
+    `<a href="${l.href}" class="${cur.endsWith(l.href.split('/').pop()) ? 'active' : ''}">${l.icon} ${l.label}</a>`
+  ).join('');
+}
+
+async function init() {
+  const user = await requireAuth(['admin']);
+  if (!user) return;
+  buildSidebar();
+  try {
+    allCheckouts = await API.get('/api/admin/checkouts') || [];
+    renderStats();
+    setFilter('all');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function renderStats() {
+  const total    = allCheckouts.length;
+  const active   = allCheckouts.filter(c => !c.returned_at).length;
+  const overdue  = allCheckouts.filter(c => c.is_overdue).length;
+  const returned = allCheckouts.filter(c => c.returned_at).length;
+  document.getElementById('checkout-stats').innerHTML = `
+    <div class="stat-card stat-blue"><div class="stat-label">Total</div><div class="stat-value">${total}</div></div>
+    <div class="stat-card stat-orange"><div class="stat-label">Active</div><div class="stat-value">${active}</div></div>
+    <div class="stat-card stat-red"><div class="stat-label">Overdue</div><div class="stat-value">${overdue}</div></div>
+    <div class="stat-card stat-green"><div class="stat-label">Returned</div><div class="stat-value">${returned}</div></div>
+  `;
+}
+
+function setFilter(f) {
+  activeFilter = f;
+  ['all','active','overdue','returned'].forEach(k => {
+    const el = document.getElementById(`f-${k}`);
+    if (el) el.className = `btn btn-sm ${k === f ? 'btn-primary' : 'btn-outline'}`;
+  });
+  render();
+}
+
+function render() {
+  const search = document.getElementById('search-input').value.toLowerCase();
+  let rows = allCheckouts;
+  if (activeFilter === 'active')   rows = rows.filter(c => !c.returned_at);
+  if (activeFilter === 'overdue')  rows = rows.filter(c => c.is_overdue);
+  if (activeFilter === 'returned') rows = rows.filter(c => !!c.returned_at);
+  if (search) rows = rows.filter(c =>
+    c.user.username.toLowerCase().includes(search) ||
+    c.book.title.toLowerCase().includes(search)
+  );
+  document.getElementById('checkout-count').textContent = `${rows.length} record${rows.length !== 1 ? 's' : ''}`;
+
+  const tbody = document.getElementById('checkouts-body');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="icon">📭</div><p>No checkouts found.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(c => `
+    <tr style="${c.is_overdue ? 'background:#fff5f5;' : ''}">
+      <td>
+        <div style="font-weight:600;">${esc(c.user.username)}</div>
+        <div class="text-muted text-sm font-mono" style="font-size:10px;">${c.user_id.slice(0,16)}…</div>
+      </td>
+      <td>
+        <div style="font-weight:600; max-width:200px;" class="truncate">${esc(c.book.title)}</div>
+        <div class="text-muted text-sm">${esc(c.book.author)}</div>
+      </td>
+      <td class="text-muted">${formatDate(c.checked_out_at)}</td>
+      <td class="${c.is_overdue ? 'text-danger' : 'text-muted'}" style="${c.is_overdue ? 'color:var(--danger); font-weight:600;' : ''}">${formatDate(c.due_date)}</td>
+      <td class="text-muted">${c.returned_at ? formatDate(c.returned_at) : '—'}</td>
+      <td>${overdueBadge(c)}</td>
+    </tr>
+  `).join('');
+}
+
+document.getElementById('search-input').addEventListener('input', render);
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+init();
+</script>
+</body>
+</html>

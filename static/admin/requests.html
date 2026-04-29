@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Requests — LibraryMS Admin</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="admin-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">📚 LibraryMS</div>
+    <nav id="sidebar-nav"></nav>
+    <div class="sidebar-footer">
+      <button class="btn btn-outline btn-sm w-full" onclick="logout()" style="color:#94a3b8; border-color:#334155;">Sign Out</button>
+    </div>
+  </aside>
+
+  <main class="admin-main">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">📋 Book Requests</h1>
+        <p class="page-subtitle">Review and action member book requests.</p>
+      </div>
+      <div style="display:flex; gap:8px;" id="bulk-actions" style="display:none;"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-body" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <button class="btn btn-sm" id="f-all"       onclick="setFilter('')">All</button>
+        <button class="btn btn-sm" id="f-pending"   onclick="setFilter('pending')">⏳ Pending</button>
+        <button class="btn btn-sm" id="f-approved"  onclick="setFilter('approved')">✅ Approved</button>
+        <button class="btn btn-sm" id="f-rejected"  onclick="setFilter('rejected')">❌ Rejected</button>
+        <button class="btn btn-sm" id="f-fulfilled" onclick="setFilter('fulfilled')">📦 Fulfilled</button>
+        <span id="req-count" class="text-muted text-sm" style="margin-left:8px;"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Member</th><th>Book</th><th>Genre</th><th>Status</th><th>Requested</th><th>Notes</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="requests-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+let allRequests = [];
+let activeFilter = 'pending';
+
+function buildSidebar() {
+  const links = [
+    { href: '/admin/index.html',     icon: '📊', label: 'Dashboard' },
+    { href: '/admin/inventory.html', icon: '📚', label: 'Inventory' },
+    { href: '/admin/users.html',     icon: '👥', label: 'Users' },
+    { href: '/admin/requests.html',  icon: '📋', label: 'Requests' },
+    { href: '/admin/checkouts.html', icon: '📖', label: 'Checkouts' },
+    { href: '/admin/analytics.html', icon: '📈', label: 'Analytics' },
+  ];
+  const cur = window.location.pathname;
+  document.getElementById('sidebar-nav').innerHTML = links.map(l =>
+    `<a href="${l.href}" class="${cur.endsWith(l.href.split('/').pop()) ? 'active' : ''}">${l.icon} ${l.label}</a>`
+  ).join('');
+}
+
+async function init() {
+  const user = await requireAuth(['admin']);
+  if (!user) return;
+  buildSidebar();
+  await loadRequests();
+  setFilter('pending');
+}
+
+async function loadRequests() {
+  try {
+    allRequests = await API.get('/api/admin/requests') || [];
+    render();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function setFilter(status) {
+  activeFilter = status;
+  ['all','pending','approved','rejected','fulfilled'].forEach(k => {
+    const el = document.getElementById(`f-${k}`);
+    if (!el) return;
+    const match = (k === 'all' && status === '') || k === status;
+    el.className = `btn btn-sm ${match ? 'btn-primary' : 'btn-outline'}`;
+  });
+  render();
+}
+
+function render() {
+  const rows = activeFilter ? allRequests.filter(r => r.status === activeFilter) : allRequests;
+  document.getElementById('req-count').textContent = `${rows.length} request${rows.length !== 1 ? 's' : ''}`;
+  const tbody = document.getElementById('requests-body');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><div class="icon">📭</div><p>No requests${activeFilter ? ` with status "${activeFilter}"` : ''}</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>
+        <div style="font-weight:600;">${esc(r.user.username)}</div>
+        <div class="text-muted text-sm">${esc(r.user.email)}</div>
+      </td>
+      <td>
+        <div style="font-weight:600; max-width:200px;" class="truncate">${esc(r.book.title)}</div>
+        <div class="text-muted text-sm">${esc(r.book.author)}</div>
+      </td>
+      <td>${r.book.genre ? `<span class="badge badge-genre">${esc(r.book.genre)}</span>` : '—'}</td>
+      <td>${statusBadge(r.status)}</td>
+      <td class="text-muted">${formatDate(r.requested_at)}</td>
+      <td class="text-muted text-sm truncate" style="max-width:140px;">${esc(r.notes || '—')}</td>
+      <td>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          ${r.status !== 'approved' && r.status !== 'fulfilled'
+            ? `<button class="btn btn-success btn-sm" onclick="updateReq('${r.id}','approved')">Approve</button>` : ''}
+          ${r.status !== 'rejected' && r.status !== 'fulfilled'
+            ? `<button class="btn btn-danger btn-sm" onclick="updateReq('${r.id}','rejected')">Reject</button>` : ''}
+          ${r.status === 'rejected' || r.status === 'approved'
+            ? `<button class="btn btn-outline btn-sm" onclick="updateReq('${r.id}','pending')">Reset</button>` : ''}
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function updateReq(id, status) {
+  try {
+    await API.put(`/api/admin/requests/${id}`, { status });
+    toast(`Request ${status}`);
+    allRequests = allRequests.map(r => r.id === id ? { ...r, status } : r);
+    render();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+init();
+</script>
+</body>
+</html>

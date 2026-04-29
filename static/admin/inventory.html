@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inventory — LibraryMS Admin</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="admin-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">📚 LibraryMS</div>
+    <nav id="sidebar-nav"></nav>
+    <div class="sidebar-footer">
+      <button class="btn btn-outline btn-sm w-full" onclick="logout()" style="color:#94a3b8; border-color:#334155;">Sign Out</button>
+    </div>
+  </aside>
+
+  <main class="admin-main">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">📚 Book Inventory</h1>
+        <p class="page-subtitle">Add, edit, and manage the library catalog.</p>
+      </div>
+      <button class="btn btn-primary" onclick="openAddModal()">+ Add Book</button>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-body">
+        <div class="search-bar">
+          <input type="text" id="search-input" class="form-control" placeholder="Search by title, author, or ISBN…" style="max-width:360px;">
+          <button class="btn btn-primary" onclick="loadBooks()">Search</button>
+          <button class="btn btn-outline" onclick="clearSearch()">Clear</button>
+          <span id="book-count" class="text-muted text-sm" style="margin-left:8px;"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th><th>Author</th><th>Genre</th><th>ISBN</th>
+              <th>Total</th><th>Available</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="books-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal-overlay" id="book-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-title">Add Book</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <input type="hidden" id="edit-id">
+    <div class="form-row">
+      <div class="form-group">
+        <label>Title *</label>
+        <input type="text" id="f-title" class="form-control" placeholder="Book title">
+      </div>
+      <div class="form-group">
+        <label>Author *</label>
+        <input type="text" id="f-author" class="form-control" placeholder="Author name">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Genre</label>
+        <input type="text" id="f-genre" class="form-control" placeholder="Fiction, Sci-Fi…">
+      </div>
+      <div class="form-group">
+        <label>ISBN</label>
+        <input type="text" id="f-isbn" class="form-control" placeholder="978…">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Published Year</label>
+        <input type="number" id="f-year" class="form-control" placeholder="2024">
+      </div>
+      <div class="form-group">
+        <label>Total Copies</label>
+        <input type="number" id="f-copies" class="form-control" placeholder="1" min="1" value="1">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea id="f-desc" class="form-control" placeholder="Brief description…"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="save-btn" onclick="saveBook()">Save Book</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete confirm -->
+<div class="modal-overlay" id="delete-modal">
+  <div class="modal" style="max-width:380px;">
+    <div class="modal-header"><span class="modal-title">Delete Book</span></div>
+    <p style="margin-bottom:16px;">Are you sure you want to delete <strong id="delete-title"></strong>? This cannot be undone.</p>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeDeleteModal()">Cancel</button>
+      <button class="btn btn-danger" id="confirm-delete-btn" onclick="confirmDelete()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+let allBooks = [];
+let deleteTargetId = null;
+
+function buildSidebar() {
+  const links = [
+    { href: '/admin/index.html',     icon: '📊', label: 'Dashboard' },
+    { href: '/admin/inventory.html', icon: '📚', label: 'Inventory' },
+    { href: '/admin/users.html',     icon: '👥', label: 'Users' },
+    { href: '/admin/requests.html',  icon: '📋', label: 'Requests' },
+    { href: '/admin/checkouts.html', icon: '📖', label: 'Checkouts' },
+    { href: '/admin/analytics.html', icon: '📈', label: 'Analytics' },
+  ];
+  const cur = window.location.pathname;
+  document.getElementById('sidebar-nav').innerHTML = links.map(l =>
+    `<a href="${l.href}" class="${cur.endsWith(l.href.split('/').pop()) ? 'active' : ''}">${l.icon} ${l.label}</a>`
+  ).join('');
+}
+
+async function init() {
+  const user = await requireAuth(['admin']);
+  if (!user) return;
+  buildSidebar();
+  loadBooks();
+}
+
+async function loadBooks() {
+  const search = document.getElementById('search-input').value;
+  try {
+    allBooks = await API.get('/api/admin/books') || [];
+    const filtered = search
+      ? allBooks.filter(b => b.title.toLowerCase().includes(search.toLowerCase()) ||
+                             b.author.toLowerCase().includes(search.toLowerCase()) ||
+                             (b.isbn||'').includes(search))
+      : allBooks;
+    document.getElementById('book-count').textContent = `${filtered.length} books`;
+    renderBooks(filtered);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function renderBooks(books) {
+  const tbody = document.getElementById('books-body');
+  if (!books.length) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><div class="icon">📭</div><p>No books found.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = books.map(b => `
+    <tr>
+      <td><strong>${esc(b.title)}</strong></td>
+      <td>${esc(b.author)}</td>
+      <td>${b.genre ? `<span class="badge badge-genre">${esc(b.genre)}</span>` : '—'}</td>
+      <td class="font-mono text-muted">${esc(b.isbn||'—')}</td>
+      <td style="text-align:center;">${b.total_copies}</td>
+      <td style="text-align:center;">
+        <span class="${b.available_copies > 0 ? 'avail-badge avail-yes' : 'avail-badge avail-no'}">${b.available_copies}</span>
+      </td>
+      <td>
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-outline btn-sm" onclick='openEditModal(${JSON.stringify(b)})'>Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="openDeleteModal('${b.id}','${esc(b.title)}')">Delete</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function clearSearch() { document.getElementById('search-input').value = ''; loadBooks(); }
+
+function openAddModal() {
+  document.getElementById('modal-title').textContent = 'Add Book';
+  document.getElementById('edit-id').value = '';
+  ['title','author','genre','isbn','desc'].forEach(f => document.getElementById('f-'+f).value = '');
+  document.getElementById('f-year').value = new Date().getFullYear();
+  document.getElementById('f-copies').value = 1;
+  document.getElementById('book-modal').classList.add('open');
+}
+
+function openEditModal(b) {
+  document.getElementById('modal-title').textContent = 'Edit Book';
+  document.getElementById('edit-id').value    = b.id;
+  document.getElementById('f-title').value    = b.title;
+  document.getElementById('f-author').value   = b.author;
+  document.getElementById('f-genre').value    = b.genre || '';
+  document.getElementById('f-isbn').value     = b.isbn || '';
+  document.getElementById('f-year').value     = b.published_year || '';
+  document.getElementById('f-copies').value   = b.total_copies;
+  document.getElementById('f-desc').value     = b.description || '';
+  document.getElementById('book-modal').classList.add('open');
+}
+
+function closeModal() { document.getElementById('book-modal').classList.remove('open'); }
+
+async function saveBook() {
+  const id = document.getElementById('edit-id').value;
+  const payload = {
+    title:        document.getElementById('f-title').value.trim(),
+    author:       document.getElementById('f-author').value.trim(),
+    genre:        document.getElementById('f-genre').value.trim(),
+    isbn:         document.getElementById('f-isbn').value.trim(),
+    description:  document.getElementById('f-desc').value.trim(),
+    published_year: parseInt(document.getElementById('f-year').value) || 0,
+    total_copies: parseInt(document.getElementById('f-copies').value) || 1,
+  };
+  if (!payload.title || !payload.author) { toast('Title and author are required', 'error'); return; }
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true;
+  try {
+    if (id) { await API.put(`/api/admin/books/${id}`, payload); toast('Book updated'); }
+    else    { await API.post('/api/admin/books', payload); toast('Book added'); }
+    closeModal();
+    loadBooks();
+  } catch (e) { toast(e.message, 'error'); }
+  finally { btn.disabled = false; }
+}
+
+function openDeleteModal(id, title) {
+  deleteTargetId = id;
+  document.getElementById('delete-title').textContent = title;
+  document.getElementById('delete-modal').classList.add('open');
+}
+function closeDeleteModal() { document.getElementById('delete-modal').classList.remove('open'); deleteTargetId = null; }
+
+async function confirmDelete() {
+  if (!deleteTargetId) return;
+  const btn = document.getElementById('confirm-delete-btn');
+  btn.disabled = true;
+  try {
+    await API.delete(`/api/admin/books/${deleteTargetId}`);
+    toast('Book deleted');
+    closeDeleteModal();
+    loadBooks();
+  } catch (e) { toast(e.message, 'error'); }
+  finally { btn.disabled = false; }
+}
+
+document.getElementById('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') loadBooks(); });
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Analytics — LibraryMS Admin</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="admin-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">📚 LibraryMS</div>
+    <nav id="sidebar-nav"></nav>
+    <div class="sidebar-footer">
+      <button class="btn btn-outline btn-sm w-full" onclick="logout()" style="color:#94a3b8; border-color:#334155;">Sign Out</button>
+    </div>
+  </aside>
+
+  <main class="admin-main">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">📈 Analytics</h1>
+        <p class="page-subtitle">Library usage trends and performance metrics.</p>
+      </div>
+      <button class="btn btn-outline" onclick="init()">↻ Refresh</button>
+    </div>
+
+    <!-- KPI row -->
+    <div class="stats-grid" id="kpi-grid" style="margin-bottom:24px;"></div>
+
+    <!-- Charts row 1 -->
+    <div class="charts-grid" style="margin-bottom:24px;">
+      <div class="chart-card" style="grid-column: span 2;">
+        <h3>Monthly Checkouts (Last 6 Months)</h3>
+        <canvas id="monthly-chart" height="80"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Collection by Genre</h3>
+        <canvas id="genre-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- Top books + availability -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:24px;">
+      <div class="card">
+        <div class="card-header">🏆 Most Checked Out Books</div>
+        <div class="card-body">
+          <div id="top-books-list"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">📊 Collection Health</div>
+        <div class="card-body">
+          <canvas id="health-chart" height="180"></canvas>
+          <div id="health-legend" style="margin-top:16px; display:flex; flex-direction:column; gap:8px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent activity full table -->
+    <div class="card">
+      <div class="card-header">🕐 Recent Borrowing Activity</div>
+      <div class="card-body">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Member</th><th>Book</th><th>Genre</th><th>Checked Out</th><th>Due</th><th>Status</th></tr></thead>
+            <tbody id="activity-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+let monthlyChart, genreChart, healthChart;
+
+function buildSidebar() {
+  const links = [
+    { href: '/admin/index.html',     icon: '📊', label: 'Dashboard' },
+    { href: '/admin/inventory.html', icon: '📚', label: 'Inventory' },
+    { href: '/admin/users.html',     icon: '👥', label: 'Users' },
+    { href: '/admin/requests.html',  icon: '📋', label: 'Requests' },
+    { href: '/admin/checkouts.html', icon: '📖', label: 'Checkouts' },
+    { href: '/admin/analytics.html', icon: '📈', label: 'Analytics' },
+  ];
+  const cur = window.location.pathname;
+  document.getElementById('sidebar-nav').innerHTML = links.map(l =>
+    `<a href="${l.href}" class="${cur.endsWith(l.href.split('/').pop()) ? 'active' : ''}">${l.icon} ${l.label}</a>`
+  ).join('');
+}
+
+async function init() {
+  const user = await requireAuth(['admin']);
+  if (!user) return;
+  buildSidebar();
+
+  try {
+    const a = await API.get('/api/admin/analytics');
+    renderKPIs(a);
+    renderMonthlyChart(a.monthly_stats || []);
+    renderGenreChart(a.genre_stats || []);
+    renderHealthChart(a);
+    renderTopBooks(a.top_books || []);
+    renderActivity(a.recent_activity || []);
+  } catch (e) {
+    toast('Failed to load analytics: ' + e.message, 'error');
+  }
+}
+
+function renderKPIs(a) {
+  const utilRate = a.total_copies > 0 ? Math.round((a.checked_out / a.total_copies) * 100) : 0;
+  document.getElementById('kpi-grid').innerHTML = `
+    <div class="stat-card stat-blue">
+      <div class="stat-label">Total Titles</div>
+      <div class="stat-value">${a.total_books}</div>
+      <div class="stat-sub">${a.total_copies} total copies</div>
+    </div>
+    <div class="stat-card stat-green">
+      <div class="stat-label">Available Now</div>
+      <div class="stat-value">${a.available}</div>
+      <div class="stat-sub">${100 - utilRate}% on shelf</div>
+    </div>
+    <div class="stat-card stat-orange">
+      <div class="stat-label">Utilisation</div>
+      <div class="stat-value">${utilRate}%</div>
+      <div class="stat-sub">${a.checked_out} copies out</div>
+    </div>
+    <div class="stat-card stat-red">
+      <div class="stat-label">Overdue</div>
+      <div class="stat-value">${a.overdue}</div>
+      <div class="stat-sub">past due date</div>
+    </div>
+    <div class="stat-card stat-purple">
+      <div class="stat-label">Members</div>
+      <div class="stat-value">${a.total_users}</div>
+      <div class="stat-sub">registered</div>
+    </div>
+    <div class="stat-card stat-orange">
+      <div class="stat-label">Pending Requests</div>
+      <div class="stat-value">${a.pending_requests}</div>
+      <div class="stat-sub">awaiting review</div>
+    </div>
+  `;
+}
+
+function renderMonthlyChart(stats) {
+  const ctx = document.getElementById('monthly-chart').getContext('2d');
+  if (monthlyChart) monthlyChart.destroy();
+
+  // Fill any missing months so chart looks continuous
+  const labels = stats.map(s => {
+    const [y, m] = s.month.split('-');
+    return new Date(y, m - 1).toLocaleString('default', { month: 'short', year: '2-digit' });
+  });
+  const data = stats.map(s => s.count);
+
+  monthlyChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels.length ? labels : ['No data'],
+      datasets: [{
+        label: 'Checkouts',
+        data: data.length ? data : [0],
+        backgroundColor: 'rgba(30,64,175,0.7)',
+        borderColor: '#1e40af',
+        borderWidth: 1,
+        borderRadius: 6,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#f1f5f9' } },
+        x: { grid: { display: false } }
+      }
+    }
+  });
+}
+
+function renderGenreChart(stats) {
+  const ctx = document.getElementById('genre-chart').getContext('2d');
+  if (genreChart) genreChart.destroy();
+  const colors = ['#1e40af','#7c3aed','#16a34a','#d97706','#dc2626','#0891b2','#be185d','#065f46','#92400e','#1e3a8a'];
+
+  genreChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: stats.map(s => s.genre),
+      datasets: [{
+        data: stats.map(s => s.count),
+        backgroundColor: colors.slice(0, stats.length),
+        borderWidth: 2,
+        borderColor: '#fff',
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { padding: 12, font: { size: 12 } } }
+      },
+      cutout: '60%',
+    }
+  });
+}
+
+function renderHealthChart(a) {
+  const ctx = document.getElementById('health-chart').getContext('2d');
+  if (healthChart) healthChart.destroy();
+
+  const avail   = a.available   || 0;
+  const out     = (a.checked_out || 0) - (a.overdue || 0);
+  const overdue = a.overdue     || 0;
+
+  healthChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Available', 'Checked Out', 'Overdue'],
+      datasets: [{
+        data: [avail, Math.max(out, 0), overdue],
+        backgroundColor: ['#16a34a', '#1e40af', '#dc2626'],
+        borderWidth: 2,
+        borderColor: '#fff',
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      cutout: '65%',
+    }
+  });
+
+  document.getElementById('health-legend').innerHTML = [
+    { label: 'Available',   color: '#16a34a', val: avail },
+    { label: 'Checked Out', color: '#1e40af', val: Math.max(out, 0) },
+    { label: 'Overdue',     color: '#dc2626', val: overdue },
+  ].map(item => `
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div style="width:12px; height:12px; border-radius:3px; background:${item.color};"></div>
+        <span class="text-sm">${item.label}</span>
+      </div>
+      <strong>${item.val}</strong>
+    </div>
+  `).join('');
+}
+
+function renderTopBooks(books) {
+  const el = document.getElementById('top-books-list');
+  if (!books.length) {
+    el.innerHTML = `<div class="empty-state"><div class="icon">📊</div><p>No checkout data yet</p></div>`;
+    return;
+  }
+  const max = books[0].checkout_count || 1;
+  el.innerHTML = books.map((b, i) => `
+    <div style="margin-bottom:14px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+          <span style="font-size:12px; font-weight:700; color:var(--text-muted); width:18px;">${i+1}</span>
+          <div style="min-width:0;">
+            <div style="font-weight:600; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px;">${esc(b.book.title)}</div>
+            <div class="text-muted text-sm">${esc(b.book.author)}</div>
+          </div>
+        </div>
+        <span style="font-weight:700; color:var(--primary); white-space:nowrap; margin-left:8px;">${b.checkout_count}×</span>
+      </div>
+      <div style="background:var(--bg); border-radius:999px; height:6px; overflow:hidden;">
+        <div style="height:100%; background:var(--primary); border-radius:999px; width:${Math.round((b.checkout_count/max)*100)}%; transition:width .6s ease;"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderActivity(activity) {
+  const tbody = document.getElementById('activity-body');
+  if (!activity.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="text-muted" style="text-align:center; padding:24px;">No activity recorded yet</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = activity.map(c => `
+    <tr>
+      <td><strong>${esc(c.user.username)}</strong></td>
+      <td class="truncate" style="max-width:180px;">${esc(c.book.title)}</td>
+      <td>${c.book.genre ? `<span class="badge badge-genre">${esc(c.book.genre)}</span>` : '—'}</td>
+      <td class="text-muted">${formatDate(c.checked_out_at)}</td>
+      <td class="text-muted">${formatDate(c.due_date)}</td>
+      <td>${overdueBadge(c)}</td>
+    </tr>
+  `).join('');
+}
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+init();
+</script>
+</body>
+</html>

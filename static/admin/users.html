@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Users — LibraryMS Admin</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="admin-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo">📚 LibraryMS</div>
+    <nav id="sidebar-nav"></nav>
+    <div class="sidebar-footer">
+      <button class="btn btn-outline btn-sm w-full" onclick="logout()" style="color:#94a3b8; border-color:#334155;">Sign Out</button>
+    </div>
+  </aside>
+
+  <main class="admin-main">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">👥 User Management</h1>
+        <p class="page-subtitle">View members and manage roles.</p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-body">
+        <div class="search-bar">
+          <input type="text" id="search-input" class="form-control" placeholder="Search by username or email…" style="max-width:360px;">
+          <select id="role-filter" class="form-control" style="max-width:160px;">
+            <option value="">All Roles</option>
+            <option value="user">User</option>
+            <option value="clerk">Clerk</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button class="btn btn-primary" onclick="renderUsers()">Filter</button>
+          <span id="user-count" class="text-muted text-sm" style="margin-left:8px;"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Username</th><th>Email</th><th>Role</th><th>Member Since</th><th>Change Role</th></tr>
+          </thead>
+          <tbody id="users-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+let allUsers = [];
+let currentAdminId = '';
+
+function buildSidebar() {
+  const links = [
+    { href: '/admin/index.html',     icon: '📊', label: 'Dashboard' },
+    { href: '/admin/inventory.html', icon: '📚', label: 'Inventory' },
+    { href: '/admin/users.html',     icon: '👥', label: 'Users' },
+    { href: '/admin/requests.html',  icon: '📋', label: 'Requests' },
+    { href: '/admin/checkouts.html', icon: '📖', label: 'Checkouts' },
+    { href: '/admin/analytics.html', icon: '📈', label: 'Analytics' },
+  ];
+  const cur = window.location.pathname;
+  document.getElementById('sidebar-nav').innerHTML = links.map(l =>
+    `<a href="${l.href}" class="${cur.endsWith(l.href.split('/').pop()) ? 'active' : ''}">${l.icon} ${l.label}</a>`
+  ).join('');
+}
+
+async function init() {
+  const user = await requireAuth(['admin']);
+  if (!user) return;
+  currentAdminId = user.id;
+  buildSidebar();
+  try {
+    allUsers = await API.get('/api/admin/users') || [];
+    renderUsers();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function renderUsers() {
+  const search = document.getElementById('search-input').value.toLowerCase();
+  const role   = document.getElementById('role-filter').value;
+  const filtered = allUsers.filter(u => {
+    const matchSearch = !search || u.username.toLowerCase().includes(search) || u.email.toLowerCase().includes(search);
+    const matchRole   = !role   || u.role === role;
+    return matchSearch && matchRole;
+  });
+  document.getElementById('user-count').textContent = `${filtered.length} users`;
+  const tbody = document.getElementById('users-body');
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><div class="icon">👤</div><p>No users found.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = filtered.map(u => `
+    <tr>
+      <td>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="width:32px; height:32px; border-radius:50%; background:linear-gradient(135deg,var(--primary),var(--secondary)); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:13px; flex-shrink:0;">
+            ${u.username[0].toUpperCase()}
+          </div>
+          <strong>${esc(u.username)}</strong>
+        </div>
+      </td>
+      <td class="text-muted">${esc(u.email)}</td>
+      <td><span class="badge role-${u.role}">${u.role}</span></td>
+      <td class="text-muted">${formatDate(u.created_at)}</td>
+      <td>
+        ${u.id === currentAdminId
+          ? '<span class="text-muted text-sm">Current user</span>'
+          : `<div style="display:flex; gap:6px; flex-wrap:wrap;">
+              ${['user','clerk','admin'].filter(r => r !== u.role).map(r =>
+                `<button class="btn btn-outline btn-sm" onclick="changeRole('${u.id}','${r}','${esc(u.username)}')"
+                  style="${r==='admin'?'color:var(--warning);border-color:var(--warning);':r==='clerk'?'color:var(--primary);border-color:var(--primary);':''}">
+                  → ${r}
+                </button>`
+              ).join('')}
+             </div>`
+        }
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function changeRole(id, role, username) {
+  if (!confirm(`Change ${username}'s role to "${role}"?`)) return;
+  try {
+    await API.put(`/api/admin/users/${id}/role`, { role });
+    toast(`${username} is now a ${role}`);
+    allUsers = allUsers.map(u => u.id === id ? { ...u, role } : u);
+    renderUsers();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+document.getElementById('search-input').addEventListener('input', renderUsers);
+document.getElementById('role-filter').addEventListener('change', renderUsers);
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+init();
+</script>
+</body>
+</html>

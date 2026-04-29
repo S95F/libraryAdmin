@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My Requests — LibraryMS</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<header class="topnav">
+  <div class="logo">📚 LibraryMS</div>
+  <nav id="main-nav"></nav>
+  <div class="user-info" id="nav-user"></div>
+</header>
+
+<div class="page">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">📋 My Book Requests</h1>
+      <p class="page-subtitle">Track the status of your book requests.</p>
+    </div>
+    <a href="/books.html" class="btn btn-primary">+ Request a Book</a>
+  </div>
+
+  <div class="card mb-4" style="margin-bottom:16px;">
+    <div class="card-body" style="display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="btn btn-outline btn-sm" onclick="filterStatus('')"    id="f-all">All</button>
+      <button class="btn btn-outline btn-sm" onclick="filterStatus('pending')"   id="f-pending">Pending</button>
+      <button class="btn btn-outline btn-sm" onclick="filterStatus('approved')"  id="f-approved">Approved</button>
+      <button class="btn btn-outline btn-sm" onclick="filterStatus('fulfilled')" id="f-fulfilled">Fulfilled</button>
+      <button class="btn btn-outline btn-sm" onclick="filterStatus('rejected')"  id="f-rejected">Rejected</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <div class="table-wrap">
+        <table id="requests-table">
+          <thead>
+            <tr>
+              <th>Book</th>
+              <th>Author</th>
+              <th>Status</th>
+              <th>Requested</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="requests-body">
+            <tr><td colspan="5" class="text-muted" style="text-align:center; padding:32px;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+let allRequests = [];
+let activeFilter = '';
+
+async function init() {
+  const user = await requireAuth();
+  if (!user) return;
+  buildTopNav(user);
+  await loadRequests();
+}
+
+async function loadRequests() {
+  try {
+    allRequests = await API.get('/api/user/requests') || [];
+    render();
+  } catch (e) {
+    document.getElementById('requests-body').innerHTML =
+      `<tr><td colspan="5" class="text-muted" style="text-align:center; padding:32px;">Failed to load: ${e.message}</td></tr>`;
+  }
+}
+
+function filterStatus(s) {
+  activeFilter = s;
+  ['all','pending','approved','fulfilled','rejected'].forEach(k => {
+    const el = document.getElementById(`f-${k}`);
+    if (el) el.className = `btn btn-sm ${(k === '' ? s === '' : s === k) ? 'btn-primary' : 'btn-outline'}`;
+  });
+  render();
+}
+
+function render() {
+  const rows = activeFilter ? allRequests.filter(r => r.status === activeFilter) : allRequests;
+  const tbody = document.getElementById('requests-body');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><div class="icon">📭</div><p>No requests${activeFilter ? ` with status "${activeFilter}"` : ''} yet.<br><a href="/books.html">Browse books to request one.</a></p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td><strong>${esc(r.book.title)}</strong></td>
+      <td class="text-muted">${esc(r.book.author)}</td>
+      <td>${statusBadge(r.status)}</td>
+      <td class="text-muted">${formatDate(r.requested_at)}</td>
+      <td class="text-muted text-sm truncate">${esc(r.notes || '—')}</td>
+    </tr>
+  `).join('');
+}
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// init filter buttons
+filterStatus('');
+init();
+</script>
+</body>
+</html>

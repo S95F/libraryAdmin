@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Books — LibraryMS</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<header class="topnav">
+  <div class="logo">📚 LibraryMS</div>
+  <nav id="main-nav"></nav>
+  <div class="user-info" id="nav-user"></div>
+</header>
+
+<div class="page">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Browse Books</h1>
+      <p class="page-subtitle">Search the library catalog and request books.</p>
+    </div>
+  </div>
+
+  <div class="card mb-4" style="margin-bottom:20px;">
+    <div class="card-body">
+      <div class="search-bar">
+        <input type="text" id="search-input" class="form-control" placeholder="Search by title, author, or ISBN…" style="max-width:380px;">
+        <select id="genre-filter" class="form-control" style="max-width:180px;">
+          <option value="">All Genres</option>
+        </select>
+        <button class="btn btn-primary" onclick="loadBooks()">Search</button>
+        <button class="btn btn-outline" onclick="clearFilters()">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="results-count" class="text-muted text-sm mb-4" style="margin-bottom:12px;"></div>
+  <div id="books-grid" class="books-grid"></div>
+</div>
+
+<!-- Request Modal -->
+<div class="modal-overlay" id="request-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Request Book</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div id="modal-book-info" style="background:var(--bg); border-radius:8px; padding:14px; margin-bottom:16px;"></div>
+    <div class="form-group">
+      <label for="request-notes">Notes <span class="text-muted" style="font-weight:400">(optional)</span></label>
+      <textarea id="request-notes" class="form-control" placeholder="Any special notes for the librarian…"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="confirm-request-btn" onclick="submitRequest()">Submit Request</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+let currentUser = null;
+let selectedBookId = null;
+
+async function init() {
+  currentUser = await requireAuth();
+  if (!currentUser) return;
+  buildTopNav(currentUser);
+  loadBooks();
+}
+
+async function loadBooks() {
+  const grid = document.getElementById('books-grid');
+  const count = document.getElementById('results-count');
+  grid.innerHTML = '<p class="text-muted">Loading…</p>';
+  const search = document.getElementById('search-input').value;
+  const genre  = document.getElementById('genre-filter').value;
+  try {
+    const data = await API.get(`/api/books?search=${encodeURIComponent(search)}&genre=${encodeURIComponent(genre)}`);
+    const books  = data.books  || [];
+    const genres = data.genres || [];
+
+    // Populate genre filter
+    const sel = document.getElementById('genre-filter');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">All Genres</option>' +
+      genres.map(g => `<option value="${g}" ${g===cur?'selected':''}>${g}</option>`).join('');
+
+    count.textContent = `${books.length} book${books.length !== 1 ? 's' : ''} found`;
+
+    if (!books.length) {
+      grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="icon">📭</div><p>No books found. Try a different search.</p></div>`;
+      return;
+    }
+
+    grid.innerHTML = books.map(b => `
+      <div class="book-card">
+        <div class="book-title">${esc(b.title)}</div>
+        <div class="book-author">by ${esc(b.author)}</div>
+        ${b.genre ? `<span class="badge badge-genre book-genre">${esc(b.genre)}</span>` : ''}
+        <div class="book-desc">${esc(b.description || '')}</div>
+        <div class="book-footer">
+          <span class="avail-badge ${b.available_copies > 0 ? 'avail-yes' : 'avail-no'}">
+            ${b.available_copies > 0 ? `${b.available_copies} available` : 'Unavailable'}
+          </span>
+          <button class="btn btn-primary btn-sm" onclick="openRequest('${b.id}', '${esc(b.title)}', '${esc(b.author)}', ${b.available_copies})">
+            Request
+          </button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    grid.innerHTML = `<p class="text-muted">Error: ${e.message}</p>`;
+  }
+}
+
+function clearFilters() {
+  document.getElementById('search-input').value = '';
+  document.getElementById('genre-filter').value = '';
+  loadBooks();
+}
+
+function openRequest(id, title, author, avail) {
+  selectedBookId = id;
+  document.getElementById('modal-book-info').innerHTML = `
+    <div style="font-weight:700; font-size:15px;">${esc(title)}</div>
+    <div class="text-muted text-sm">by ${esc(author)}</div>
+    <div class="mt-2">
+      <span class="avail-badge ${avail > 0 ? 'avail-yes' : 'avail-no'}">${avail > 0 ? `${avail} copies available` : 'Currently unavailable'}</span>
+    </div>
+  `;
+  document.getElementById('request-notes').value = '';
+  document.getElementById('request-modal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('request-modal').classList.remove('open');
+  selectedBookId = null;
+}
+
+async function submitRequest() {
+  if (!selectedBookId) return;
+  const btn = document.getElementById('confirm-request-btn');
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+  try {
+    await API.post(`/api/books/${selectedBookId}/request`, {
+      notes: document.getElementById('request-notes').value,
+    });
+    toast('Request submitted successfully!');
+    closeModal();
+    loadBooks();
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Submit Request';
+  }
+}
+
+document.getElementById('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') loadBooks(); });
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+init();
+</script>
+</body>
+</html>

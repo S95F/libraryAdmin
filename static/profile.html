@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My ID Card — LibraryMS</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<header class="topnav">
+  <div class="logo">📚 LibraryMS</div>
+  <nav id="main-nav"></nav>
+  <div class="user-info" id="nav-user"></div>
+</header>
+
+<div class="page">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">🪪 My Library ID Card</h1>
+      <p class="page-subtitle">Show this card at the checkout desk — staff can scan either code.</p>
+    </div>
+  </div>
+
+  <!-- Profile info card -->
+  <div class="card mb-4" style="margin-bottom:20px;">
+    <div class="card-body" style="display:flex; align-items:center; gap:20px;">
+      <div style="width:56px; height:56px; border-radius:50%; background:linear-gradient(135deg,var(--primary),var(--secondary)); display:flex; align-items:center; justify-content:center; font-size:24px; color:#fff; font-weight:700;" id="avatar">?</div>
+      <div>
+        <div style="font-size:20px; font-weight:700;" id="profile-name">—</div>
+        <div class="text-muted text-sm" id="profile-email">—</div>
+        <div class="mt-1" id="profile-role"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ID codes -->
+  <div class="id-card-wrap">
+    <div class="id-card">
+      <h3>QR CODE</h3>
+      <img id="qr-img" src="/api/user/qr" alt="QR Code" style="width:200px; height:200px;">
+      <p class="text-muted text-sm mt-2">Scan with any QR reader</p>
+    </div>
+
+    <div class="id-card">
+      <h3>BARCODE (Code128)</h3>
+      <img id="barcode-img" src="/api/user/barcode" alt="Barcode" style="width:100%; max-width:360px; height:80px;">
+      <p class="text-muted text-sm mt-2">Scan with barcode scanner at checkout desk</p>
+    </div>
+
+    <div class="id-card">
+      <h3>MEMBER ID</h3>
+      <div style="font-size:48px; margin:16px 0;">🪪</div>
+      <div class="uuid-text" id="uuid-display">Loading…</div>
+      <button class="btn btn-outline btn-sm mt-3" onclick="copyUUID()">📋 Copy ID</button>
+      <p class="text-muted text-sm mt-2">Paste at the checkout desk if scanner unavailable</p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:20px;">
+    <div class="card-header">ℹ️ How to use your ID card</div>
+    <div class="card-body">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px,1fr)); gap:16px;">
+        <div style="padding:16px; background:var(--bg); border-radius:8px;">
+          <div style="font-size:24px; margin-bottom:8px;">📸</div>
+          <div style="font-weight:600; margin-bottom:4px;">QR Code</div>
+          <div class="text-muted text-sm">Clerk scans with phone or scanner. Works from printed or screen display.</div>
+        </div>
+        <div style="padding:16px; background:var(--bg); border-radius:8px;">
+          <div style="font-size:24px; margin-bottom:8px;">📊</div>
+          <div style="font-weight:600; margin-bottom:4px;">Barcode</div>
+          <div class="text-muted text-sm">Optimised for laser barcode scanners at the checkout desk.</div>
+        </div>
+        <div style="padding:16px; background:var(--bg); border-radius:8px;">
+          <div style="font-size:24px; margin-bottom:8px;">🔑</div>
+          <div style="font-weight:600; margin-bottom:4px;">Member ID</div>
+          <div class="text-muted text-sm">Unique identifier. Copy and paste, or read it out to staff.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+let userUUID = '';
+
+async function init() {
+  const user = await requireAuth();
+  if (!user) return;
+  buildTopNav(user);
+
+  userUUID = user.id;
+  document.getElementById('avatar').textContent     = user.username[0].toUpperCase();
+  document.getElementById('profile-name').textContent  = user.username;
+  document.getElementById('profile-email').textContent = user.email;
+  document.getElementById('profile-role').innerHTML  = `<span class="badge role-${user.role}">${user.role}</span>`;
+  document.getElementById('uuid-display').textContent  = user.id;
+}
+
+function copyUUID() {
+  navigator.clipboard.writeText(userUUID).then(() => toast('Member ID copied to clipboard!'));
+}
+
+// Reload images with cache-bust if they fail
+document.getElementById('qr-img').onerror = function() {
+  this.src = '/api/user/qr?t=' + Date.now();
+};
+document.getElementById('barcode-img').onerror = function() {
+  this.src = '/api/user/barcode?t=' + Date.now();
+};
+
+init();
+</script>
+</body>
+</html>

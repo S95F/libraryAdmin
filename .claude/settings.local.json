@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(go mod *)",
+      "Bash(node --check install.js)",
+      "Bash(node --check migrate.js)"
+    ]
+  }
+}

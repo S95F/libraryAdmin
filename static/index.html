@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>LibraryMS</title>
+  <script>
+    // Redirect based on auth state
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(j => { window.location = j.success ? '/dashboard.html' : '/login.html'; })
+      .catch(() => { window.location = '/login.html'; });
+  </script>
+</head>
+<body></body>
+</html>

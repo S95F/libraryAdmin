@@ -1,0 +1,35 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Generated config files (created by install.js)
+server/db.config.js
+setenv.bat
+setenv.ps1
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Go build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/libraryAdmin
+
+# Go test cache
+*.test
+*.out
+coverage.txt
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# IDE / OS
+.DS_Store
+Thumbs.db
